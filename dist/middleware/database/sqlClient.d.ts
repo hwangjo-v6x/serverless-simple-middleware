@@ -5,4 +5,4 @@ export declare class SQLClient<T = unknown> extends Kysely<T> {
     constructor(config: ConnectionOptions);
     clearConnection: () => Promise<void>;
 }
-export { sql, type DeleteQueryBuilder, type ExpressionBuilder, type InsertQueryBuilder, type SelectQueryBuilder, type UpdateQueryBuilder, } from 'kysely';
+export { expressionBuilder, sql, type DeleteQueryBuilder, type Expression, type ExpressionBuilder, type InsertQueryBuilder, type RawBuilder, type SelectQueryBuilder, type SqlBool, type UpdateQueryBuilder, } from 'kysely';

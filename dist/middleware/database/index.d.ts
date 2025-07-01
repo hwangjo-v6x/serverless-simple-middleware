@@ -1,2 +1,2 @@
 export { ConnectionProxy } from './connectionProxy';
-export { sql, SQLClient, type DeleteQueryBuilder, type ExpressionBuilder, type InsertQueryBuilder, type SelectQueryBuilder, type UpdateQueryBuilder, } from './sqlClient';
+export { sql, type DeleteQueryBuilder, type Expression, type ExpressionBuilder, type InsertQueryBuilder, type RawBuilder, type SelectQueryBuilder, type SqlBool, type SQLClient, type UpdateQueryBuilder, } from './sqlClient';

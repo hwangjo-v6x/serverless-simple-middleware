@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sql = exports.SQLClient = void 0;
+exports.sql = exports.expressionBuilder = exports.SQLClient = void 0;
 const kysely_1 = require("kysely");
 const mysql2_1 = require("mysql2");
 class LazyConnectionPool {
@@ -47,6 +47,11 @@ class SQLClient extends kysely_1.Kysely {
             dialect: new kysely_1.MysqlDialect({
                 pool,
             }),
+            plugins: [
+                new kysely_1.HandleEmptyInListsPlugin({
+                    strategy: kysely_1.replaceWithNoncontingentExpression,
+                }),
+            ],
         });
         this.pool = pool;
     }
@@ -56,4 +61,5 @@ class SQLClient extends kysely_1.Kysely {
 }
 exports.SQLClient = SQLClient;
 var kysely_2 = require("kysely");
+Object.defineProperty(exports, "expressionBuilder", { enumerable: true, get: function () { return kysely_2.expressionBuilder; } });
 Object.defineProperty(exports, "sql", { enumerable: true, get: function () { return kysely_2.sql; } });
