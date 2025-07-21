@@ -1,0 +1,19 @@
+import { MySQLPluginOptions } from '../mysql';
+export declare class ConnectionProxy {
+    private pluginConfig;
+    private connection?;
+    private initialized;
+    private dbName?;
+    constructor(config: MySQLPluginOptions);
+    query: <T>(sql: string, params?: any[]) => Promise<T | undefined>;
+    fetch: <T>(sql: string, params?: any[]) => Promise<T[]>;
+    fetchOne: <T>(sql: string, params?: any[], defaultValue?: T) => Promise<T>;
+    beginTransaction: () => Promise<void>;
+    commit: () => Promise<void>;
+    rollback: () => Promise<void>;
+    clearConnection: () => void;
+    onPluginCreated: () => Promise<void>;
+    private prepareConnection;
+    private changeDatabase;
+    private tryToInitializeSchema;
+}
