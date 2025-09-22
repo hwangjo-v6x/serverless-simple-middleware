@@ -1,11 +1,18 @@
-import type { ConnectionConfig } from 'mysql';
-import type { PoolOptions } from 'mysql2';
+import type {
+  ConnectionOptions as ConnectionConfig,
+  PoolOptions,
+} from 'mysql2';
 import { HandlerAuxBase, HandlerPluginBase } from './base';
 import { ConnectionProxy } from './database/connectionProxy';
 import { SQLClient } from './database/sqlClient';
 
 export interface MySQLPluginOptions {
-  config: ConnectionConfig & PoolOptions;
+  config: Omit<ConnectionConfig, 'password'> &
+    Omit<PoolOptions, 'password'> & {
+      host: string;
+      user: string;
+      port: number;
+    };
   schema?: {
     eager?: boolean;
     ignoreError?: boolean;
@@ -30,7 +37,7 @@ export class MySQLPlugin<T = unknown> extends HandlerPluginBase<
   constructor(options: MySQLPluginOptions) {
     super();
     this.proxy = new ConnectionProxy(options);
-    this.sqlClient = new SQLClient(options.config);
+    this.sqlClient = new SQLClient(options);
   }
 
   public create = async () => {

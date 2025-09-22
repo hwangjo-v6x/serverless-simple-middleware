@@ -1,3 +1,4 @@
+import { Signer } from '@aws-sdk/rds-signer';
 import {
   HandleEmptyInListsPlugin,
   Kysely,
@@ -5,30 +6,46 @@ import {
   MysqlPool,
   replaceWithNoncontingentExpression,
 } from 'kysely';
-import {
-  createConnection,
-  type Connection,
-  type ConnectionOptions,
-  type QueryError,
-} from 'mysql2';
+import { createConnection, type Connection, type QueryError } from 'mysql2';
+import { MySQLPluginOptions } from '../mysql';
 
 interface LazyMysqlPoolConnection extends Connection {
   release: () => void;
 }
 
+const mysqlClearPasswordPlugin = (token: string) => () => () =>
+  Buffer.from(`${token}\0`);
+
 class LazyConnectionPool implements MysqlPool {
   private connection: LazyMysqlPoolConnection | null = null;
+  private signer: Signer;
 
-  constructor(private config: ConnectionOptions) {}
+  constructor(private config: MySQLPluginOptions) {
+    this.signer = new Signer({
+      hostname: config.config.host,
+      port: config.config.port,
+      username: config.config.user,
+    });
+  }
 
-  public getConnection = (
+  public getConnection = async (
     callback: (error: unknown, connection: LazyMysqlPoolConnection) => void,
-  ): void => {
+  ): Promise<void> => {
     if (this.connection) {
       callback(null, this.connection);
       return;
     }
-    const conn = createConnection(this.config);
+
+    const token = await this.signer.getAuthToken();
+    const conn = createConnection({
+      ...this.config.config,
+      password: token,
+      ssl: { rejectUnauthorized: true },
+      authPlugins: {
+        mysql_clear_password: mysqlClearPasswordPlugin(token),
+      },
+    });
+
     conn.connect((err: QueryError) => {
       if (err) {
         callback(err, {} as LazyMysqlPoolConnection);
@@ -66,7 +83,7 @@ class LazyConnectionPool implements MysqlPool {
 export class SQLClient<T = unknown> extends Kysely<T> {
   private pool: LazyConnectionPool;
 
-  constructor(config: ConnectionOptions) {
+  constructor(config: MySQLPluginOptions) {
     const pool = new LazyConnectionPool(config);
     super({
       dialect: new MysqlDialect({

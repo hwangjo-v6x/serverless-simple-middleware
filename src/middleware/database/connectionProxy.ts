@@ -1,11 +1,16 @@
-import { createConnection, type Connection, type MysqlError } from 'mysql';
+import { Signer } from '@aws-sdk/rds-signer';
+import { createConnection, type Connection, type QueryError } from 'mysql2';
 import { getLogger } from '../../utils';
 import { MySQLPluginOptions } from '../mysql';
 
 const logger = getLogger(__filename);
 
+const mysqlClearPasswordPlugin = (token: string) => () => () =>
+  Buffer.from(`${token}\0`);
+
 export class ConnectionProxy {
   private pluginConfig: MySQLPluginOptions;
+  private signer: Signer;
   private connection?: Connection;
 
   private initialized: boolean;
@@ -17,27 +22,38 @@ export class ConnectionProxy {
       this.dbName = config.config.database;
       config.config.database = undefined;
     }
+    this.signer = new Signer({
+      hostname: config.config.host,
+      port: config.config.port,
+      username: config.config.user,
+    });
   }
 
   public query = <T>(sql: string, params?: any[]) =>
     new Promise<T | undefined>(async (resolve, reject) => {
-      const connection = this.prepareConnection();
+      const connection = await this.prepareConnection();
       await this.tryToInitializeSchema(false);
 
       if (process.env.NODE_ENV !== 'test') {
         logger.silly(`Execute query[${sql}] with params[${params}]`);
       }
-      connection.query(sql, params, (err: MysqlError, result?: T) => {
-        if (err) {
-          logger.error(`error occurred in database query=${sql}, error=${err}`);
-          reject(err);
-        } else {
-          resolve(result);
-          if (process.env.NODE_ENV !== 'test') {
-            logger.silly(`DB result is ${JSON.stringify(result)}`);
+      connection.query(
+        sql,
+        params,
+        (err: QueryError | null, result: any, _fields: any) => {
+          if (err) {
+            logger.error(
+              `error occurred in database query=${sql}, error=${err}`,
+            );
+            reject(err);
+          } else {
+            resolve(result as T);
+            if (process.env.NODE_ENV !== 'test') {
+              logger.silly(`DB result is ${JSON.stringify(result)}`);
+            }
           }
-        }
-      });
+        },
+      );
     });
 
   public fetch = <T>(sql: string, params?: any[]) =>
@@ -54,10 +70,10 @@ export class ConnectionProxy {
 
   public beginTransaction = () =>
     new Promise<void>(async (resolve, reject) => {
-      const connection = this.prepareConnection();
+      const connection = await this.prepareConnection();
       await this.tryToInitializeSchema(false);
 
-      connection.beginTransaction((err: MysqlError) => {
+      connection.beginTransaction((err: QueryError | null) => {
         if (err) {
           reject(err);
           return;
@@ -68,10 +84,10 @@ export class ConnectionProxy {
 
   public commit = () =>
     new Promise<void>(async (resolve, reject) => {
-      const connection = this.prepareConnection();
+      const connection = await this.prepareConnection();
       await this.tryToInitializeSchema(false);
 
-      connection.commit((err: MysqlError) => {
+      connection.commit((err: QueryError | null) => {
         if (err) {
           reject(err);
           return;
@@ -82,10 +98,10 @@ export class ConnectionProxy {
 
   public rollback = () =>
     new Promise<void>(async (resolve, reject) => {
-      const connection = this.prepareConnection();
+      const connection = await this.prepareConnection();
       await this.tryToInitializeSchema(false);
 
-      connection.rollback((err: MysqlError) => {
+      connection.rollback((err: QueryError | null) => {
         if (err) {
           reject(err);
           return;
@@ -116,22 +132,32 @@ export class ConnectionProxy {
 
   public onPluginCreated = async () => this.tryToInitializeSchema(true);
 
-  private prepareConnection = () => {
+  private prepareConnection = async () => {
     if (this.connection) {
       return this.connection;
     }
-    this.connection = createConnection(this.pluginConfig.config);
+    const token = await this.signer.getAuthToken();
+    this.connection = createConnection({
+      ...this.pluginConfig.config,
+      password: token,
+      ssl: { rejectUnauthorized: true },
+      authPlugins: {
+        mysql_clear_password: mysqlClearPasswordPlugin(token),
+      },
+    });
     this.connection.connect();
     return this.connection;
   };
 
   private changeDatabase = (dbName: string) =>
     new Promise<void>((resolve, reject) =>
-      this.prepareConnection().changeUser(
-        {
-          database: dbName,
-        },
-        (err) => (err ? reject(err) : resolve(undefined)),
+      this.prepareConnection().then((connection) =>
+        connection.changeUser(
+          {
+            database: dbName,
+          },
+          (err) => (err ? reject(err) : resolve(undefined)),
+        ),
       ),
     );
 
