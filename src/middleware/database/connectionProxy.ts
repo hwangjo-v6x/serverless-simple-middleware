@@ -172,51 +172,31 @@ export class ConnectionProxy {
     const conn = createConnection(this.connectionConfig);
 
     return new Promise((resolve, reject) => {
-      let settled = false;
+      conn.on('error', (err) => {
+        logger.error(`Connection error event: ${err.message}`);
+      });
 
-      const cleanup = () => {
-        conn.removeListener('error', onError);
-        conn.removeListener('connect', onConnect);
-      };
+      conn.connect((err) => {
+        if (err) {
+          logger.error(
+            `[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`,
+          );
+          conn.destroy();
 
-      const onError = (err: QueryError) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        logger.error(
-          `[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`,
-        );
-        conn.destroy();
-
-        if (retryCount < 1) {
-          logger.warn('Retrying database connection...');
-          this.createConnection(retryCount + 1)
-            .then(resolve)
-            .catch(reject);
+          if (retryCount < 1) {
+            logger.warn('Retrying database connection...');
+            this.createConnection(retryCount + 1)
+              .then(resolve)
+              .catch(reject);
+          } else {
+            logger.error('Database connection failed after retry. Giving up.');
+            reject(err);
+          }
         } else {
-          logger.error('Database connection failed after retry. Giving up.');
-          reject(err);
+          logger.verbose('Database connection established successfully.');
+          resolve(conn);
         }
-      };
-
-      const onConnect = () => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        conn.on('error', (err) => {
-          logger.error(`Database connection error occurred: ${err.message}`);
-        });
-        logger.verbose('Database connection established successfully.');
-        resolve(conn);
-      };
-
-      conn.on('error', onError);
-      conn.on('connect', onConnect);
-      conn.connect();
+      });
     });
   };
 

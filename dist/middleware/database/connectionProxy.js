@@ -119,45 +119,29 @@ class ConnectionProxy {
     createConnection = async (retryCount = 0) => {
         const conn = (0, mysql2_1.createConnection)(this.connectionConfig);
         return new Promise((resolve, reject) => {
-            let settled = false;
-            const cleanup = () => {
-                conn.removeListener('error', onError);
-                conn.removeListener('connect', onConnect);
-            };
-            const onError = (err) => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                cleanup();
-                logger.error(`[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`);
-                conn.destroy();
-                if (retryCount < 1) {
-                    logger.warn('Retrying database connection...');
-                    this.createConnection(retryCount + 1)
-                        .then(resolve)
-                        .catch(reject);
+            conn.on('error', (err) => {
+                logger.error(`Connection error event: ${err.message}`);
+            });
+            conn.connect((err) => {
+                if (err) {
+                    logger.error(`[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`);
+                    conn.destroy();
+                    if (retryCount < 1) {
+                        logger.warn('Retrying database connection...');
+                        this.createConnection(retryCount + 1)
+                            .then(resolve)
+                            .catch(reject);
+                    }
+                    else {
+                        logger.error('Database connection failed after retry. Giving up.');
+                        reject(err);
+                    }
                 }
                 else {
-                    logger.error('Database connection failed after retry. Giving up.');
-                    reject(err);
+                    logger.verbose('Database connection established successfully.');
+                    resolve(conn);
                 }
-            };
-            const onConnect = () => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                cleanup();
-                conn.on('error', (err) => {
-                    logger.error(`Database connection error occurred: ${err.message}`);
-                });
-                logger.verbose('Database connection established successfully.');
-                resolve(conn);
-            };
-            conn.on('error', onError);
-            conn.on('connect', onConnect);
-            conn.connect();
+            });
         });
     };
     ensureConnectionConfig = async () => {
