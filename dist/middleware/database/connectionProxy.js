@@ -23,9 +23,7 @@ class ConnectionProxy {
         }
         this.secretsCache = secretsManager_1.SecretsManagerCache.getInstance();
     }
-    query = (sql, params) => new Promise(async (resolve, reject) => {
-        const connection = await this.prepareConnection();
-        await this.tryToInitializeSchema(false);
+    query = (sql, params) => this.prepareConnection().then((connection) => this.tryToInitializeSchema(false).then(() => new Promise((resolve, reject) => {
         if (process.env.NODE_ENV !== 'test') {
             logger.silly(`Execute query[${sql}] with params[${params}]`);
         }
@@ -41,7 +39,7 @@ class ConnectionProxy {
                 }
             }
         });
-    });
+    })));
     fetch = (sql, params) => this.query(sql, params).then((res) => res || []);
     fetchOne = (sql, params, defaultValue) => this.fetch(sql, params).then((res) => {
         if (res === undefined || res[0] === undefined) {
@@ -50,9 +48,7 @@ class ConnectionProxy {
         }
         return res[0];
     });
-    beginTransaction = () => new Promise(async (resolve, reject) => {
-        const connection = await this.prepareConnection();
-        await this.tryToInitializeSchema(false);
+    beginTransaction = () => this.prepareConnection().then((connection) => this.tryToInitializeSchema(false).then(() => new Promise((resolve, reject) => {
         connection.beginTransaction((err) => {
             if (err) {
                 reject(err);
@@ -60,10 +56,8 @@ class ConnectionProxy {
             }
             resolve();
         });
-    });
-    commit = () => new Promise(async (resolve, reject) => {
-        const connection = await this.prepareConnection();
-        await this.tryToInitializeSchema(false);
+    })));
+    commit = () => this.prepareConnection().then((connection) => this.tryToInitializeSchema(false).then(() => new Promise((resolve, reject) => {
         connection.commit((err) => {
             if (err) {
                 reject(err);
@@ -71,10 +65,8 @@ class ConnectionProxy {
             }
             resolve();
         });
-    });
-    rollback = () => new Promise(async (resolve, reject) => {
-        const connection = await this.prepareConnection();
-        await this.tryToInitializeSchema(false);
+    })));
+    rollback = () => this.prepareConnection().then((connection) => this.tryToInitializeSchema(false).then(() => new Promise((resolve, reject) => {
         connection.rollback((err) => {
             if (err) {
                 reject(err);
@@ -82,7 +74,7 @@ class ConnectionProxy {
             }
             resolve();
         });
-    });
+    })));
     clearConnection = () => {
         const conn = this.connection;
         this.connection = undefined;
@@ -127,29 +119,45 @@ class ConnectionProxy {
     createConnection = async (retryCount = 0) => {
         const conn = (0, mysql2_1.createConnection)(this.connectionConfig);
         return new Promise((resolve, reject) => {
-            conn.on('error', (err) => {
-                logger.error(`Connection error event: ${err.message}`);
-            });
-            conn.connect((err) => {
-                if (err) {
-                    logger.error(`[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`);
-                    conn.destroy();
-                    if (retryCount < 1) {
-                        logger.warn('Retrying database connection...');
-                        this.createConnection(retryCount + 1)
-                            .then(resolve)
-                            .catch(reject);
-                    }
-                    else {
-                        logger.error('Database connection failed after retry. Giving up.');
-                        reject(err);
-                    }
+            let settled = false;
+            const cleanup = () => {
+                conn.removeListener('error', onError);
+                conn.removeListener('connect', onConnect);
+            };
+            const onError = (err) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup();
+                logger.error(`[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`);
+                conn.destroy();
+                if (retryCount < 1) {
+                    logger.warn('Retrying database connection...');
+                    this.createConnection(retryCount + 1)
+                        .then(resolve)
+                        .catch(reject);
                 }
                 else {
-                    logger.verbose('Database connection established successfully.');
-                    resolve(conn);
+                    logger.error('Database connection failed after retry. Giving up.');
+                    reject(err);
                 }
-            });
+            };
+            const onConnect = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup();
+                conn.on('error', (err) => {
+                    logger.error(`Database connection error occurred: ${err.message}`);
+                });
+                logger.verbose('Database connection established successfully.');
+                resolve(conn);
+            };
+            conn.on('error', onError);
+            conn.on('connect', onConnect);
+            conn.connect();
         });
     };
     ensureConnectionConfig = async () => {

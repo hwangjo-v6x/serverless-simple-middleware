@@ -32,31 +32,33 @@ export class ConnectionProxy {
   }
 
   public query = <T>(sql: string, params?: any[]) =>
-    new Promise<T | undefined>(async (resolve, reject) => {
-      const connection = await this.prepareConnection();
-      await this.tryToInitializeSchema(false);
-
-      if (process.env.NODE_ENV !== 'test') {
-        logger.silly(`Execute query[${sql}] with params[${params}]`);
-      }
-      connection.query(
-        sql,
-        params,
-        (err: QueryError, result: QueryResult, _fields?: FieldPacket[]) => {
-          if (err) {
-            logger.error(
-              `error occurred in database query=${sql}, error=${err}`,
-            );
-            reject(err);
-          } else {
-            resolve(result as T);
+    this.prepareConnection().then((connection) =>
+      this.tryToInitializeSchema(false).then(
+        () =>
+          new Promise<T | undefined>((resolve, reject) => {
             if (process.env.NODE_ENV !== 'test') {
-              logger.silly(`DB result is ${JSON.stringify(result)}`);
+              logger.silly(`Execute query[${sql}] with params[${params}]`);
             }
-          }
-        },
-      );
-    });
+            connection.query(
+              sql,
+              params,
+              (err: QueryError, result: QueryResult, _fields?: FieldPacket[]) => {
+                if (err) {
+                  logger.error(
+                    `error occurred in database query=${sql}, error=${err}`,
+                  );
+                  reject(err);
+                } else {
+                  resolve(result as T);
+                  if (process.env.NODE_ENV !== 'test') {
+                    logger.silly(`DB result is ${JSON.stringify(result)}`);
+                  }
+                }
+              },
+            );
+          }),
+      ),
+    );
 
   public fetch = <T>(sql: string, params?: any[]) =>
     this.query<T[]>(sql, params).then((res) => res || []);
@@ -71,46 +73,52 @@ export class ConnectionProxy {
     });
 
   public beginTransaction = () =>
-    new Promise<void>(async (resolve, reject) => {
-      const connection = await this.prepareConnection();
-      await this.tryToInitializeSchema(false);
-
-      connection.beginTransaction((err: QueryError) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
+    this.prepareConnection().then((connection) =>
+      this.tryToInitializeSchema(false).then(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            connection.beginTransaction((err: QueryError) => {
+              if (err) {
+                reject(err);
+                return;
+              }
+              resolve();
+            });
+          }),
+      ),
+    );
 
   public commit = () =>
-    new Promise<void>(async (resolve, reject) => {
-      const connection = await this.prepareConnection();
-      await this.tryToInitializeSchema(false);
-
-      connection.commit((err: QueryError) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
+    this.prepareConnection().then((connection) =>
+      this.tryToInitializeSchema(false).then(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            connection.commit((err: QueryError) => {
+              if (err) {
+                reject(err);
+                return;
+              }
+              resolve();
+            });
+          }),
+      ),
+    );
 
   public rollback = () =>
-    new Promise<void>(async (resolve, reject) => {
-      const connection = await this.prepareConnection();
-      await this.tryToInitializeSchema(false);
-
-      connection.rollback((err: QueryError) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
+    this.prepareConnection().then((connection) =>
+      this.tryToInitializeSchema(false).then(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            connection.rollback((err: QueryError) => {
+              if (err) {
+                reject(err);
+                return;
+              }
+              resolve();
+            });
+          }),
+      ),
+    );
 
   public clearConnection = () => {
     const conn = this.connection;
@@ -164,31 +172,51 @@ export class ConnectionProxy {
     const conn = createConnection(this.connectionConfig);
 
     return new Promise((resolve, reject) => {
-      conn.on('error', (err) => {
-        logger.error(`Connection error event: ${err.message}`);
-      });
+      let settled = false;
 
-      conn.connect((err) => {
-        if (err) {
-          logger.error(
-            `[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`,
-          );
-          conn.destroy();
+      const cleanup = () => {
+        conn.removeListener('error', onError);
+        conn.removeListener('connect', onConnect);
+      };
 
-          if (retryCount < 1) {
-            logger.warn('Retrying database connection...');
-            this.createConnection(retryCount + 1)
-              .then(resolve)
-              .catch(reject);
-          } else {
-            logger.error('Database connection failed after retry. Giving up.');
-            reject(err);
-          }
-        } else {
-          logger.verbose('Database connection established successfully.');
-          resolve(conn);
+      const onError = (err: QueryError) => {
+        if (settled) {
+          return;
         }
-      });
+        settled = true;
+        cleanup();
+        logger.error(
+          `[Attempt ${retryCount + 1}] Failed to connect to database: ${err.message}`,
+        );
+        conn.destroy();
+
+        if (retryCount < 1) {
+          logger.warn('Retrying database connection...');
+          this.createConnection(retryCount + 1)
+            .then(resolve)
+            .catch(reject);
+        } else {
+          logger.error('Database connection failed after retry. Giving up.');
+          reject(err);
+        }
+      };
+
+      const onConnect = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        conn.on('error', (err) => {
+          logger.error(`Database connection error occurred: ${err.message}`);
+        });
+        logger.verbose('Database connection established successfully.');
+        resolve(conn);
+      };
+
+      conn.on('error', onError);
+      conn.on('connect', onConnect);
+      conn.connect();
     });
   };
 
